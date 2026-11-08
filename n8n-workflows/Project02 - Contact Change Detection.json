@@ -1,0 +1,72 @@
+{
+  "name": "Project02 - Contact Change Detection",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH candidates AS (\n    SELECT\n        e.id AS source_event_id,\n        e.customer_id,\n        changes.field_name,\n        changes.current_value,\n        changes.proposed_value\n\n    FROM source_events e\n\n    JOIN customers c\n      ON c.id = e.customer_id\n\n    CROSS JOIN LATERAL (\n        VALUES\n        (\n            'phone',\n            c.phone,\n            NULLIF(\n                TRIM(e.payload #>> '{customer,phone}'),\n                ''\n            )\n        ),\n        (\n            'company',\n            c.company,\n            NULLIF(\n                TRIM(e.payload #>> '{customer,company}'),\n                ''\n            )\n        )\n    ) AS changes (\n        field_name,\n        current_value,\n        proposed_value\n    )\n\n    WHERE e.customer_id IS NOT NULL\n      AND e.status = 'ready'\n      AND c.hubspot_contact_id IS NOT NULL\n      AND changes.proposed_value IS NOT NULL\n      AND changes.proposed_value IS DISTINCT FROM\n          changes.current_value\n),\n\ninserted AS (\n    INSERT INTO contact_change_proposals (\n        source_event_id,\n        customer_id,\n        field_name,\n        current_value,\n        proposed_value\n    )\n\n    SELECT\n        source_event_id,\n        customer_id,\n        field_name,\n        current_value,\n        proposed_value\n    FROM candidates\n\n    ON CONFLICT (source_event_id, field_name)\n    DO NOTHING\n\n    RETURNING *\n)\n\nSELECT *\nFROM inserted;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "fbd6ef0d-b847-42ea-9fcf-7204fc5a7ec3",
+      "name": "DetectContactChanges",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "9da7e224-f64a-469c-85e2-bcfbd35f2a41",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "DetectContactChanges",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d2267659-ece5-4a9d-93e8-a8f7df0cb82b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "aoTxNGzAi9ofEm9d",
+  "tags": []
+}

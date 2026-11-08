@@ -1,0 +1,335 @@
+{
+  "name": "Project02 - HubSpot Worker",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH candidate AS (\n    SELECT j.id\n    FROM hubspot_sync_jobs j\n    WHERE (\n        j.status = 'pending'\n        OR (\n            j.status = 'failed'\n            AND j.next_retry_at <= NOW()\n        )\n        OR (\n            j.status = 'processing'\n            AND j.lease_expires_at <= NOW()\n        )\n    )\n    AND j.attempt_count < 3\n    ORDER BY j.id\n    FOR UPDATE SKIP LOCKED\n    LIMIT 1\n),\nclaimed AS (\n    UPDATE hubspot_sync_jobs j\n    SET\n        status = 'processing',\n        attempt_count = j.attempt_count + 1,\n        claim_token = gen_random_uuid(),\n        lease_expires_at = NOW() + INTERVAL '10 minutes',\n        next_retry_at = NULL,\n        updated_at = NOW()\n    FROM candidate\n    WHERE j.id = candidate.id\n    RETURNING j.*\n)\nSELECT\n    j.id AS job_id,\n    j.customer_id,\n    j.claim_token,\n    j.attempt_count,\n    c.full_name,\n    c.primary_email,\n    c.phone,\n    c.company,\n    c.hubspot_contact_id\nFROM claimed j\nJOIN customers c ON c.id = j.customer_id;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "b1132bbe-3f99-40a7-9256-bf26b9f5528c",
+      "name": "ClaimHubSpotJob",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map((item, index) => {\n  const customer = item.json;\n\n  const fullName = String(\n    customer.full_name ?? \"\"\n  ).trim();\n\n  const nameParts = fullName.split(/\\s+/);\n\n  const firstName = nameParts[0] ?? \"\";\n  const lastName = nameParts.slice(1).join(\" \");\n\n  const email = String(\n    customer.primary_email ?? \"\"\n  ).trim().toLowerCase();\n\n  const properties = {\n    email\n  };\n\n  if (firstName) {\n    properties.firstname = firstName;\n  }\n\n  if (lastName) {\n    properties.lastname = lastName;\n  }\n\n  if (customer.phone) {\n    properties.phone = customer.phone;\n  }\n\n  if (customer.company) {\n    properties.company = customer.company;\n  }\n\n  return {\n    json: {\n      job_id: customer.job_id,\n      customer_id: customer.customer_id,\n      claim_token: customer.claim_token,\n      attempt_count: customer.attempt_count,\n      email,\n      properties,\n      existing_hubspot_id:\n        customer.hubspot_contact_id ?? null\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "36dce0ef-7049-41b8-a028-8bd8c2a4f635",
+      "name": "PrepareHubSpotContact"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{{ JSON.stringify({\n  filterGroups: [\n    {\n      filters: [\n        {\n          propertyName: \"email\",\n          operator: \"EQ\",\n          value: $json.email\n        }\n      ]\n    }\n  ],\n  properties: [\n    \"email\",\n    \"firstname\",\n    \"lastname\",\n    \"phone\",\n    \"company\"\n  ],\n  limit: 2\n}) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "id": "d837d74f-6bb7-4c96-a7f8-defe998a4c4c",
+      "name": "FindHubSpotContact",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "vB6G8BbXdzHzijSq",
+          "name": "HubSpot Service Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3a31d5ad-276a-42a4-863e-08ae15cbc65e",
+              "leftValue": "={{ $json.found_existing === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "88613e47-59d5-492c-b579-d0dff3888443",
+      "name": "IsExistingHubSpotContact"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst search = $input.first().json;\n\nconst original = $(\"PrepareHubSpotContact\")\n  .first().json;\n\nconst results = search.results;\n\nif (!Array.isArray(results)) {\n  throw new Error(\"Invalid HubSpot search response\");\n}\n\nif (results.length > 1 || Number(search.total) > 1) {\n  throw new Error(\n    \"Ambiguous HubSpot match: multiple contacts found\"\n  );\n}\n\nif (results.length === 1) {\n  const hubspotEmail = String(\n    results[0].properties?.email ?? \"\"\n  ).trim().toLowerCase();\n\n  if (hubspotEmail !== original.email) {\n    throw new Error(\"HubSpot email mismatch\");\n  }\n}\n\nreturn [{\n  json: {\n    ...original,\n    found_existing: results.length === 1,\n    hubspot_id: results[0]?.id ?? null\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "b8e8c6e6-7840-4b84-abad-c6c8f5eff42c",
+      "name": "CheckHubspotMatch"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map(item => ({\n  json: {\n    job_id: item.json.job_id,\n    customer_id: item.json.customer_id,\n    claim_token: item.json.claim_token,\n    hubspot_id: item.json.hubspot_id,\n    sync_action: \"matched_existing\"\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        -96
+      ],
+      "id": "d95ba19e-3c12-4342-9fd1-401e5c07dfcd",
+      "name": "ReuseHubSpotContact"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{{ JSON.stringify({\n  properties: $json.properties\n}) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1232,
+        144
+      ],
+      "id": "3120bee0-adcf-467d-b8cb-f50b50ca9e2e",
+      "name": "CreateHubSpotContact",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "vB6G8BbXdzHzijSq",
+          "name": "HubSpot Service Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst response = $input.first().json;\n\nconst original = $(\"CheckHubspotMatch\")\n  .first().json;\n\nif (!response.id) {\n  throw new Error(\"HubSpot did not return a contact ID\");\n}\n\nif (\n  String(response.properties?.email ?? \"\")\n    .trim().toLowerCase() !== original.email\n) {\n  throw new Error(\"Created contact email mismatch\");\n}\n\nreturn [{\n  json: {\n    job_id: original.job_id,\n    customer_id: original.customer_id,\n    claim_token: original.claim_token,\n    hubspot_id: String(response.id),\n    sync_action: \"created\"\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        112
+      ],
+      "id": "8631e881-2881-40f7-9fa5-376e8d22283b",
+      "name": "NormalizeCreatedContact"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH eligible AS (\n    SELECT\n        j.id AS job_id,\n        j.customer_id\n    FROM hubspot_sync_jobs j\n    JOIN customers c\n      ON c.id = j.customer_id\n    WHERE j.id = $1::bigint\n      AND j.claim_token = $2::uuid\n      AND j.customer_id = $3::bigint\n      AND j.status = 'processing'\n      AND j.lease_expires_at > NOW()\n      AND (\n          c.hubspot_contact_id IS NULL\n          OR c.hubspot_contact_id = $4::text\n      )\n    FOR UPDATE OF j, c\n),\nupdated_customer AS (\n    UPDATE customers c\n    SET\n        hubspot_contact_id = $4::text,\n        updated_at = NOW()\n    FROM eligible e\n    WHERE c.id = e.customer_id\n    RETURNING c.id\n),\nupdated_job AS (\n    UPDATE hubspot_sync_jobs j\n    SET\n        status = 'completed',\n        hubspot_contact_id = $4::text,\n        claim_token = NULL,\n        lease_expires_at = NULL,\n        last_error = NULL,\n        completed_at = NOW(),\n        updated_at = NOW()\n    FROM updated_customer c\n    WHERE j.id = $1::bigint\n      AND j.customer_id = c.id\n    RETURNING j.id, j.customer_id\n),\nlogged AS (\n    INSERT INTO sync_audit_logs (\n        customer_id,\n        action,\n        outcome,\n        details\n    )\n    SELECT\n        customer_id,\n        'hubspot_contact_sync',\n        'completed',\n        jsonb_build_object(\n            'hubspot_contact_id', $4::text,\n            'sync_action', $5::text\n        )\n    FROM updated_job\n    RETURNING id\n)\nSELECT\n    (SELECT COUNT(*) FROM updated_job) AS completed_jobs,\n    (SELECT COUNT(*) FROM logged) AS audit_records,\n    $4::text AS hubspot_contact_id;\n",
+        "options": {
+          "queryReplacement": "=\n{{ [\n  $json.job_id,\n  $json.claim_token,\n  $json.customer_id,\n  $json.hubspot_id,\n  $json.sync_action\n] }}\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1584,
+        -48
+      ],
+      "id": "4a305ae5-1c65-4aee-823b-f2751295507d",
+      "name": "SaveHubSpotResult",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        16,
+        -160
+      ],
+      "id": "90bb6a68-136e-4470-a407-eb1074d7b527",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ClaimHubSpotJob": {
+      "main": [
+        [
+          {
+            "node": "PrepareHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PrepareHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "FindHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FindHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "CheckHubspotMatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CheckHubspotMatch": {
+      "main": [
+        [
+          {
+            "node": "IsExistingHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IsExistingHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "ReuseHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CreateHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CreateHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "NormalizeCreatedContact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NormalizeCreatedContact": {
+      "main": [
+        [
+          {
+            "node": "SaveHubSpotResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ReuseHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "SaveHubSpotResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "ClaimHubSpotJob",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b66617ee-ed3c-4f0e-9a9c-2b670ec69cc2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "bUQ5Eo4jWnp02PF2",
+  "tags": []
+}

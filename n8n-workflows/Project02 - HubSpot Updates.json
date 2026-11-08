@@ -1,0 +1,349 @@
+{
+  "name": "Project02 - HubSpot Updates",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "566b7cfd-6f04-41e5-b8da-bc91a8060c15",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT\n    p.id AS proposal_id,\n    p.customer_id,\n    p.field_name,\n    p.current_value,\n    p.proposed_value,\n    c.hubspot_contact_id\nFROM contact_change_proposals p\nJOIN customers c ON c.id = p.customer_id\nWHERE p.status = 'approved'\n  AND c.hubspot_contact_id IS NOT NULL\nORDER BY p.id\nLIMIT 1;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "56a07a6c-c8db-4dc1-b7aa-e44462fe39f7",
+      "name": "GetApprovedChange",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=\n{{ \"https://api.hubapi.com/crm/v3/objects/contacts/\" + $json.hubspot_contact_id + \"?properties=phone,company\" }}\n",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "id": "44f61182-cafc-4597-a102-6106b4a2a2f6",
+      "name": "GetHubSpotContact",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "vB6G8BbXdzHzijSq",
+          "name": "HubSpot Service Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst contact = $input.first().json;\nconst proposal = $(\"GetApprovedChange\").first().json;\n\nconst field = proposal.field_name;\n\nif (![\"phone\", \"company\"].includes(field)) {\n  throw new Error(\"Unsupported update field\");\n}\n\nif (\n  String(contact.id) !==\n  String(proposal.hubspot_contact_id)\n) {\n  throw new Error(\"HubSpot contact ID mismatch\");\n}\n\nconst hubspotValue = String(\n  contact.properties?.[field] ?? \"\"\n).trim();\n\nconst baseline = String(\n  proposal.current_value ?? \"\"\n).trim();\n\nconst proposed = String(\n  proposal.proposed_value ?? \"\"\n).trim();\n\nlet action = \"conflict\";\n\nif (hubspotValue === proposed) {\n  action = \"already_applied\";\n} else if (hubspotValue === baseline) {\n  action = \"apply\";\n}\n\nreturn [{\n  json: {\n    ...proposal,\n    hubspot_current_value: hubspotValue,\n    action\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "fb280f3f-9346-486a-87a0-0ce59fee52bd",
+      "name": "EvaluateHubSpotChange"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "apply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "3fe16f7b-73ac-4e99-89ef-aff82d0ec2a0"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "493a66c8-f5a7-4099-9f88-9681e7774f02",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "already_applied",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f978d9e0-28f0-4eb7-ae20-bfd23e5aa080",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "conflict",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        0
+      ],
+      "id": "be2392b7-5d9c-41a0-89c2-d6f8b918670a",
+      "name": "RouteHubSpotChange"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "= {{ \"https://api.hubapi.com/crm/v3/objects/contacts/\" + $json.hubspot_contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{{ JSON.stringify({\n  properties: {\n    [$json.field_name]: $json.proposed_value\n  }\n}) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        -96
+      ],
+      "id": "46dc4aa2-16fc-466e-81d9-bb0f1b323f4f",
+      "name": "UpdateHubSpotContact",
+      "credentials": {
+        "hubspotAppToken": {
+          "id": "vB6G8BbXdzHzijSq",
+          "name": "HubSpot Service Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst result = $input.first().json;\nconst proposal = $(\"EvaluateHubSpotChange\").first().json;\n\nif (String(result.id) !== String(proposal.hubspot_contact_id)) {\n  throw new Error(\"Updated contact ID mismatch\");\n}\n\nif (\n  String(result.properties?.[proposal.field_name] ?? \"\").trim()\n  !== String(proposal.proposed_value).trim()\n) {\n  throw new Error(\"HubSpot did not confirm the proposed value\");\n}\n\nreturn [{\n  json: {\n    ...proposal,\n    action: \"applied\"\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -96
+      ],
+      "id": "a23f4004-7edc-405f-8514-cde48fae1fd2",
+      "name": "VerifyHubSpotUpdate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH changed AS (\n    UPDATE contact_change_proposals p\n    SET\n        status = 'applied',\n        applied_at = NOW()\n    WHERE p.id = $1::bigint\n      AND p.customer_id = $2::bigint\n      AND p.status = 'approved'\n      AND p.field_name = $3::text\n      AND p.proposed_value = $4::text\n      AND EXISTS (\n          SELECT 1\n          FROM customers c\n          WHERE c.id = p.customer_id\n            AND c.hubspot_contact_id = $5::text\n            AND (\n                (p.field_name = 'phone'\n                    AND c.phone IS NOT DISTINCT FROM p.current_value)\n                OR\n                (p.field_name = 'company'\n                    AND c.company IS NOT DISTINCT FROM p.current_value)\n            )\n      )\n    RETURNING p.*\n),\n\nupdated_customer AS (\n    UPDATE customers c\n    SET\n        phone = CASE\n            WHEN changed.field_name = 'phone'\n            THEN changed.proposed_value\n            ELSE c.phone\n        END,\n        company = CASE\n            WHEN changed.field_name = 'company'\n            THEN changed.proposed_value\n            ELSE c.company\n        END,\n        updated_at = NOW()\n    FROM changed\n    WHERE c.id = changed.customer_id\n    RETURNING c.id\n),\n\nlogged AS (\n    INSERT INTO sync_audit_logs (\n        customer_id,\n        action,\n        outcome,\n        details\n    )\n    SELECT\n        changed.customer_id,\n        'hubspot_field_update',\n        'applied',\n        jsonb_build_object(\n            'field', changed.field_name,\n            'previous', changed.current_value,\n            'new', changed.proposed_value,\n            'hubspot_id', $5::text\n        )\n    FROM changed\n    JOIN updated_customer c\n      ON c.id = changed.customer_id\n    RETURNING id\n)\n\nSELECT\n    (SELECT COUNT(*) FROM changed) AS applied_count,\n    (SELECT COUNT(*) FROM logged) AS audit_count;\n",
+        "options": {
+          "queryReplacement": "=\n{{ [\n  $json.proposal_id,\n  $json.customer_id,\n  $json.field_name,\n  $json.proposed_value,\n  $json.hubspot_contact_id\n] }}\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1520,
+        0
+      ],
+      "id": "fd779d83-5a18-4f86-b6a4-39e55ce0e5b3",
+      "name": "SaveAppliedChange",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH changed AS (\n    UPDATE contact_change_proposals\n    SET status = 'conflict'\n    WHERE id = $1::bigint\n      AND status = 'approved'\n    RETURNING customer_id, field_name,\n              current_value, proposed_value\n),\nlogged AS (\n    INSERT INTO sync_audit_logs (\n        customer_id, action, outcome, details\n    )\n    SELECT\n        customer_id,\n        'hubspot_field_update',\n        'conflict',\n        jsonb_build_object(\n            'field', field_name,\n            'baseline', current_value,\n            'proposed', proposed_value,\n            'hubspot_current', $2::text\n        )\n    FROM changed\n    RETURNING id\n)\nSELECT COUNT(*) AS conflicts_recorded\nFROM logged;\n",
+        "options": {
+          "queryReplacement": "={{ [$json.proposal_id, $json.hubspot_current_value] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1120,
+        112
+      ],
+      "id": "d3ae756b-525e-447c-971a-edd5249e49e0",
+      "name": "RecordHubSpotConflict",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "GetApprovedChange",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetApprovedChange": {
+      "main": [
+        [
+          {
+            "node": "GetHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "EvaluateHubSpotChange",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EvaluateHubSpotChange": {
+      "main": [
+        [
+          {
+            "node": "RouteHubSpotChange",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RouteHubSpotChange": {
+      "main": [
+        [
+          {
+            "node": "UpdateHubSpotContact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SaveAppliedChange",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RecordHubSpotConflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateHubSpotContact": {
+      "main": [
+        [
+          {
+            "node": "VerifyHubSpotUpdate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VerifyHubSpotUpdate": {
+      "main": [
+        [
+          {
+            "node": "SaveAppliedChange",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2996febf-19b7-4485-b64e-8dd6c66f8592",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "1nttYURGn6qSJRTx",
+  "tags": []
+}

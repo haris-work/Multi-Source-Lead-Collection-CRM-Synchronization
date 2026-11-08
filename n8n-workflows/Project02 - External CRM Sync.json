@@ -1,0 +1,164 @@
+{
+  "name": "Project02 - External CRM Sync",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        0
+      ],
+      "id": "8c586f53-765d-4b25-8d75-80d551ce1103",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/events",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "afterId",
+              "value": "={{ $json.last_event_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "id": "9ae0ed1c-4099-439c-be1f-247736599e58",
+      "name": "GetCrmEvents"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nconst events = items.flatMap(item => {\n  if (Array.isArray(item.json)) {\n    return item.json;\n  }\n\n  if (Array.isArray(item.json.data)) {\n    return item.json.data;\n  }\n\n  if (item.json.eventId !== undefined) {\n    return [item.json];\n  }\n\n  return [];\n});\n\nreturn events.map((event, index) => {\n  const contact = event.contact;\n\n  const name = [\n    contact.firstName,\n    contact.lastName\n  ].filter(Boolean).join(\" \");\n\n  return {\n    json: {\n      source: \"external_crm\",\n      source_event_id: `API-${event.eventId}`,\n\n      customer: {\n        name,\n        email: contact.email,\n        phone: contact.phone ?? \"\",\n        company: contact.company ?? \"\"\n      },\n\n      inquiry: {\n        service: contact.service ?? \"\",\n        budget: contact.budget,\n        message: contact.message ?? \"\"\n      },\n\n      metadata: {\n        external_contact_id: String(\n          event.contactId\n        ),\n        external_event_id: event.eventId,\n        event_type: event.eventType,\n        contact_version: contact.version,\n        event_timestamp: event.createdAt\n      }\n    },\n\n    pairedItem: {\n      item: 0\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "7a909a62-4e2b-4faf-a8e6-cb21c5d5322a",
+      "name": "NormalizeCrmEvents"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "xeTky6mty5WcwRiq",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/xeTky6mty5WcwRiq",
+          "cachedResultName": "Project 02 - Shared Lead Processor"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        896,
+        0
+      ],
+      "id": "561a7c1d-5914-450a-8c8d-82700f2781eb",
+      "name": "ProcessCrmEvents"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    source,\n    COALESCE(last_event_id, '0') AS last_event_id\nFROM sync_cursors\nWHERE source = 'external_crm_api';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        176,
+        0
+      ],
+      "id": "7c813191-70ef-4c45-a6d5-770e7ecf3739",
+      "name": "GetSyncCursor",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "GetSyncCursor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetCrmEvents": {
+      "main": [
+        [
+          {
+            "node": "NormalizeCrmEvents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NormalizeCrmEvents": {
+      "main": [
+        [
+          {
+            "node": "ProcessCrmEvents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetSyncCursor": {
+      "main": [
+        [
+          {
+            "node": "GetCrmEvents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b8846aa1-85a9-4398-9a2c-3752e462e6d3",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "1AQgNVeo0QD91N0p",
+  "tags": []
+}

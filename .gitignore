@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/crm.db
+**/*.db
+**/backups/
+*.dump
+*.sqlite*
+credentials/
+secrets/
+*.log

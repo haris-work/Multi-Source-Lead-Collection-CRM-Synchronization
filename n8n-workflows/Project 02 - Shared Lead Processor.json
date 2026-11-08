@@ -1,0 +1,405 @@
+{
+  "name": "Project 02 - Shared Lead Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "991ccc44-7370-483c-98a4-72e55d1a0a34",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nconst allowedSources = [\n  \"website\",\n  \"marketing\",\n  \"external_crm\",\n  \"google_sheets\",\n  \"gmail\"\n];\n\nreturn items.map((item, index) => {\n  const lead = item.json;\n  const errors = [];\n\n  const source = String(lead.source ?? \"\").trim();\n  const sourceEventId = String(\n    lead.source_event_id ?? \"\"\n  ).trim();\n\n  const name = String(\n    lead.customer?.name ?? \"\"\n  ).trim().replace(/\\s+/g, \" \");\n\n  const email = String(\n    lead.customer?.email ?? \"\"\n  ).trim().toLowerCase();\n\n  const service = String(\n    lead.inquiry?.service ?? \"\"\n  ).trim();\n\n  const rawBudget = lead.inquiry?.budget;\n\n  const budget =\n    rawBudget === null ||\n    rawBudget === undefined ||\n    rawBudget === \"\"\n      ? null\n      : Number(rawBudget);\n\n  if (!allowedSources.includes(source)) {\n    errors.push(\"Unsupported source\");\n  }\n\n  if (!/^[A-Za-z0-9_-]{3,100}$/.test(sourceEventId)) {\n    errors.push(\"Invalid source event ID\");\n  }\n\n  if (name.length < 2) {\n    errors.push(\"Invalid customer name\");\n  }\n\n  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {\n    errors.push(\"Invalid email address\");\n  }\n\n  if (!service) {\n    errors.push(\"Service is required\");\n  }\n\n  if (\n    budget !== null &&\n    (!Number.isFinite(budget) || budget < 0)\n  ) {\n    errors.push(\"Invalid estimated budget\");\n  }\n\n  return {\n    json: {\n      ...lead,\n      source,\n      source_event_id: sourceEventId,\n      event_key: `${source}:${sourceEventId}`,\n\n      customer: {\n        ...lead.customer,\n        name,\n        email\n      },\n\n      inquiry: {\n        ...lead.inquiry,\n        service,\n        budget\n      },\n\n      validation: {\n        is_valid: errors.length === 0,\n        errors\n      }\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "991484c8-92e3-4342-b99c-37003b25cb4c",
+      "name": "ValidateAndPrepareEvent"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5dbf0b10-928b-42ce-959e-162939744237",
+              "leftValue": "={{ [\"website\",\"marketing\",\"external_crm\",\"google_sheets\",\"gmail\"].includes($json.source) && /^[A-Za-z0-9_-]{3,100}$/.test($json.source_event_id) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        0
+      ],
+      "id": "fe4885c2-9e62-4133-aafb-1b799e4062b7",
+      "name": "IFTrackableEvent"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map(item => {\n  const lead = item.json;\n\n  return {\n    json: {\n      result: \"rejected\",\n      http_status: 400,\n      event_key: null,\n      source: lead.source,\n      errors: lead.validation.errors\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "id": "95869589-2e00-4bff-944b-0e190b4e2f2c",
+      "name": "RejectUntrackableEvent"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "bkTGu67OncdFj2FU",
+          "mode": "list",
+          "cachedResultName": "p02_source_events",
+          "cachedResultUrl": "/projects/JVKmQDWiJzN6HREo/datatables/bkTGu67OncdFj2FU"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_key",
+              "keyValue": "={{ $json.event_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "24989a8f-f03e-431f-a4d1-4909b941e8de",
+      "name": "FindSourceEvent",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst existing = $input.first().json;\n\nconst lead = $(\"ValidateAndPrepareEvent\")\n  .first().json;\n\nconst alreadyExists =\n  existing.event_key === lead.event_key;\n\nreturn [{\n  json: {\n    ...lead,\n    already_exists: alreadyExists,\n\n    previous_status: alreadyExists\n      ? existing.status\n      : null\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -96
+      ],
+      "id": "2bec0b9f-35bb-46cc-9dc5-ef9760bc5fe3",
+      "name": "DetermineEventState"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0f740c17-04a6-4d97-98d3-da390a4995fb",
+              "leftValue": "={{ $json.already_exists }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        -96
+      ],
+      "id": "78e78119-43f1-4dfa-890d-9bc6d447434b",
+      "name": "IFAlreadyRecorded"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst lead = $input.first().json;\n\nreturn [{\n  json: {\n    result: \"duplicate\",\n    http_status: 200,\n    event_key: lead.event_key,\n    source: lead.source,\n    previous_status: lead.previous_status,\n    message: \"Source event already recorded\"\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -144
+      ],
+      "id": "ba9dcbfc-aada-427e-9745-04d0be45f6d8",
+      "name": "ReturnDuplicateResult"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "bkTGu67OncdFj2FU",
+          "mode": "list",
+          "cachedResultName": "p02_source_events",
+          "cachedResultUrl": "/projects/JVKmQDWiJzN6HREo/datatables/bkTGu67OncdFj2FU"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "event_key",
+              "keyValue": "={{ $json.event_key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_key": "={{ $json.event_key }}",
+            "source": "={{ $json.source }}",
+            "source_event_id": "={{ $json.source_event_id }}",
+            "customer_email": "={{ $json.customer.email }}",
+            "status": "={{ $json.validation.is_valid ? \"accepted\" : \"rejected\" }}",
+            "errors_json": "={{ JSON.stringify($json.validation.errors) }}",
+            "received_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "event_key",
+              "displayName": "event_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "source_event_id",
+              "displayName": "source_event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "customer_email",
+              "displayName": "customer_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "errors_json",
+              "displayName": "errors_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1264,
+        32
+      ],
+      "id": "aa53ed66-9d41-4409-9605-77e3dce65d5e",
+      "name": "StoreSourceEvent"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst lead = $(\"DetermineEventState\")\n  .first().json;\n\nconst result = lead.validation.is_valid\n  ? \"accepted\"\n  : \"rejected\";\n\nreturn [{\n  json: {\n    result,\n    http_status: result === \"accepted\" ? 200 : 400,\n    event_key: lead.event_key,\n    source: lead.source,\n    customer_email: lead.customer.email,\n    errors: lead.validation.errors\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        32
+      ],
+      "id": "71b3064f-cb34-4ed6-8640-4781ea260355",
+      "name": "ReturnStoredResult"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "ValidateAndPrepareEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ValidateAndPrepareEvent": {
+      "main": [
+        [
+          {
+            "node": "IFTrackableEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IFTrackableEvent": {
+      "main": [
+        [
+          {
+            "node": "FindSourceEvent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RejectUntrackableEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FindSourceEvent": {
+      "main": [
+        [
+          {
+            "node": "DetermineEventState",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DetermineEventState": {
+      "main": [
+        [
+          {
+            "node": "IFAlreadyRecorded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IFAlreadyRecorded": {
+      "main": [
+        [
+          {
+            "node": "ReturnDuplicateResult",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "StoreSourceEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "StoreSourceEvent": {
+      "main": [
+        [
+          {
+            "node": "ReturnStoredResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "78d171c9-d318-4281-bdf5-fcff0fa7c8f5",
+  "meta": {
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "xeTky6mty5WcwRiq",
+  "tags": []
+}

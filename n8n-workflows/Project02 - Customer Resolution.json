@@ -1,0 +1,235 @@
+{
+  "name": "Project02 - Customer Resolution",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM resolve_next_customer();",
+        "options": {
+          "largeNumbersOutput": "text"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "1cb1f8cb-f348-4f8b-b040-3887d786fe08",
+      "name": "ResolveCustomerIdentity",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "created",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "4baa7e2f-ad4d-4675-8f37-cb7e07714407"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6746043d-3194-4689-8a44-8663b4d63286",
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "matched",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "721afa6a-1f03-4ebf-bd4c-ef6be5329139",
+                    "leftValue": "={{ $json.outcome }}",
+                    "rightValue": "manual_review",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        0
+      ],
+      "id": "d5bd09d6-2d10-400e-8c74-a38af054d38d",
+      "name": "RouteResolutionResult"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map(item => ({\n  json: {\n    ...item.json,\n    requires_human_review: false\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -112
+      ],
+      "id": "125a6fa4-e8d0-44d6-a382-0ffd0a498143",
+      "name": "ReportNewCustomer"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map(item => ({\n  json: {\n    ...item.json,\n    requires_human_review: false\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "39448c5b-d873-4a98-bb41-83a3f2b9a0e9",
+      "name": "ReportMatchedCustomer"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  json: {\n    result: \"manual_review\",\n    database_event_id: item.json.event_id,\n    reason: item.json.detail,\n    requires_human_review: true\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        112
+      ],
+      "id": "55da40a3-88eb-4bdb-b535-4e8be9153a74",
+      "name": "ReportIdentityConflict"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -48,
+        96
+      ],
+      "id": "bc15e1a7-cbd4-4448-a716-e2f1e991e35e",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ResolveCustomerIdentity": {
+      "main": [
+        [
+          {
+            "node": "RouteResolutionResult",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RouteResolutionResult": {
+      "main": [
+        [
+          {
+            "node": "ReportNewCustomer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ReportMatchedCustomer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ReportIdentityConflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "ResolveCustomerIdentity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b5b3a3b0-0bd8-4188-984a-57ddb33f4e6a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "KM40hGXEADYv3UN1",
+  "tags": []
+}

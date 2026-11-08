@@ -1,0 +1,130 @@
+{
+  "name": "Project 02 - Google Sheets Lead Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 3,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "1Q6HEIc0ew-4ZSnE74BQzqnNv3Ezp6FbBA35B2j49SRM",
+          "mode": "list",
+          "cachedResultName": "P02 - Multi-Source CRM Leads",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Q6HEIc0ew-4ZSnE74BQzqnNv3Ezp6FbBA35B2j49SRM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Q6HEIc0ew-4ZSnE74BQzqnNv3Ezp6FbBA35B2j49SRM/edit#gid=0"
+        },
+        "event": "rowAdded",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        -272,
+        -16
+      ],
+      "id": "65fc4b47-564f-42cd-933d-aacc7599795c",
+      "name": "Google Sheets Trigger",
+      "credentials": {
+        "googleSheetsTriggerOAuth2Api": {
+          "id": "ONI6WhVegatvoNOT",
+          "name": "Google Sheets Trigger account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map((item, index) => {\n  const row = item.json;\n\n  const rawBudget = row.budget;\n  const budget =\n    rawBudget === \"\" || rawBudget == null\n      ? null\n      : Number(rawBudget);\n\n  const sourceId = String(\n    row.lead_id ?? \"\"\n  ).trim();\n\n  return {\n    json: {\n      source: \"google_sheets\",\n      source_event_id: sourceId,\n\n      customer: {\n        name: String(\n          row.full_name ?? \"\"\n        ).trim().replace(/\\s+/g, \" \"),\n\n        email: String(\n          row.email ?? \"\"\n        ).trim().toLowerCase(),\n\n        phone: String(\n          row.phone ?? \"\"\n        ).trim(),\n\n        company: String(\n          row.company ?? \"\"\n        ).trim()\n      },\n\n      inquiry: {\n        service: String(\n          row.service ?? \"\"\n        ).trim(),\n\n        budget,\n\n        message: String(\n          row.message ?? \"\"\n        ).trim()\n      },\n\n      metadata: {\n        sheet_lead_id: sourceId,\n        sheet_status: String(row.status ?? \"\")\n      }\n    },\n    pairedItem: {\n      item: index\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -16
+      ],
+      "id": "6a3e2f23-7288-481b-905f-6a55c6c9ee16",
+      "name": "NormalizeGoogleSheetsLead"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "xeTky6mty5WcwRiq",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/xeTky6mty5WcwRiq",
+          "cachedResultName": "Project 02 - Shared Lead Processor"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        160,
+        -16
+      ],
+      "id": "26bdf221-0cd1-4bcb-bad5-0505c2617a62",
+      "name": "ProcessGoogleSheetsLead"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Sheets Trigger": {
+      "main": [
+        [
+          {
+            "node": "NormalizeGoogleSheetsLead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NormalizeGoogleSheetsLead": {
+      "main": [
+        [
+          {
+            "node": "ProcessGoogleSheetsLead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "381ef183-0f1f-48d7-a3da-c1eb63be2817",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "SJj2woi368LAPMRw",
+  "tags": []
+}

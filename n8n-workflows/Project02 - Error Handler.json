@@ -1,0 +1,90 @@
+{
+  "name": "Project02 - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -16
+      ],
+      "id": "ac6fddc3-c415-4235-bc4e-9f27fd4afcb1",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst input = $input.first().json;\n\nconst execution = input.execution ?? {};\nconst workflow = input.workflow ?? {};\nconst trigger = input.trigger ?? {};\n\nreturn [{\n  json: {\n    workflow_id: String(workflow.id ?? \"\"),\n    workflow_name: String(workflow.name ?? \"unknown\"),\n    execution_id: String(execution.id ?? \"\"),\n    failed_node: String(\n      execution.lastNodeExecuted ?? \"unknown\"\n    ),\n    error_message: String(\n      execution.error?.message ??\n      trigger.error?.message ??\n      \"Unknown workflow error\"\n    ),\n    occurred_at: new Date().toISOString()\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        -16
+      ],
+      "id": "0032ad09-0807-47a6-9658-a2339c0eb728",
+      "name": "NormalizeWorkflowError"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nINSERT INTO workflow_error_logs (\n    workflow_id,\n    workflow_name,\n    execution_id,\n    failed_node,\n    error_message\n)\nVALUES ($1, $2, $3, $4, $5)\nON CONFLICT DO NOTHING\nRETURNING id;\n",
+        "options": {
+          "queryReplacement": "=\n{{ [\n  $json.workflow_id,\n  $json.workflow_name,\n  $json.execution_id,\n  $json.failed_node,\n  $json.error_message\n] }}\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        288,
+        -16
+      ],
+      "id": "a47a63de-a8fc-404e-930b-b2c3d00a6ad8",
+      "name": "SaveWorkflowError",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "NormalizeWorkflowError",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NormalizeWorkflowError": {
+      "main": [
+        [
+          {
+            "node": "SaveWorkflowError",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7e356ded-f769-4e39-93d5-28ae0db5b261",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "rJnvfyxOAizSgI8E",
+  "tags": []
+}

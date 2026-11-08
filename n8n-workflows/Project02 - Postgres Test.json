@@ -1,0 +1,97 @@
+{
+  "name": "Project02 - Postgres Test",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        -32
+      ],
+      "id": "bf6d3e02-773a-466f-836f-4fa52c329963",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"source\": \"marketing\",\n  \"source_event_id\": \"WEB-PG-001\",\n  \"customer\": {\n    \"name\": \"Sarah Johnson\",\n    \"email\": \"sarah@example.com\",\n    \"phone\": \"+15550100123\",\n    \"company\": \"BrightPath Solutions\"\n  },\n  \"inquiry\": {\n    \"service\": \"CRM Automation\",\n    \"budget\": 3000,\n    \"message\": \"We need multi-source lead integration.\"\n  },\n  \"validation\": {\n    \"is_valid\": true,\n    \"errors\": []\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        176,
+        -32
+      ],
+      "id": "f3c674d6-d8c9-44e8-b34f-2b9272552e6c",
+      "name": "PrepareTestEvent"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (\n    INSERT INTO source_events (\n        source,\n        source_event_id,\n        customer_email,\n        payload,\n        validation_errors,\n        status\n    )\n    VALUES (\n        $1,\n        $2,\n        $3,\n        $4::jsonb,\n        $5::jsonb,\n        $6\n    )\n    ON CONFLICT (source, source_event_id)\n    DO NOTHING\n    RETURNING id\n)\nSELECT\n    id,\n    TRUE AS is_new,\n    'recorded' AS result\nFROM inserted\n\n\nUNION ALL\n\nSELECT\nNULL::bigint AS id,\nFALSE AS is_new,\n'duplicate' AS result\nWHERE NOT EXISTS (SELECT 1 FROM inserted);",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.source,\n  $json.source_event_id,\n  $json.customer.email,\n  JSON.stringify($json),\n  JSON.stringify($json.validation.errors),\n  $json.validation.is_valid ? \"received\" : \"rejected\"\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        352,
+        -32
+      ],
+      "id": "f8c9951f-b1a6-443a-968d-a6294bdefc4f",
+      "name": "InsertSourceEvent",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "PrepareTestEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PrepareTestEvent": {
+      "main": [
+        [
+          {
+            "node": "InsertSourceEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsertSourceEvent": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1633fbb8-9fd3-449e-8568-d3f4fe1ee5a9",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "x9Z0BcvLu2nCcu7v",
+  "tags": []
+}

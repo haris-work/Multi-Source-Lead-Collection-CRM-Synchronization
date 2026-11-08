@@ -1,0 +1,130 @@
+{
+  "name": "Project02 - System Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cdfc127d-967c-4bca-8fa3-e18cfca5b741",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT\n    (\n        SELECT COUNT(*)\n        FROM source_events\n        WHERE status = 'received'\n    ) AS pending_events,\n\n    (\n        SELECT COUNT(*)\n        FROM source_events\n        WHERE status = 'processing'\n    ) AS processing_events,\n\n    (\n        SELECT COUNT(*)\n        FROM source_events\n        WHERE status = 'ready'\n          AND customer_id IS NULL\n    ) AS unresolved_customers,\n\n    (\n        SELECT COUNT(*)\n        FROM source_events\n        WHERE status = 'manual_review'\n    ) AS identity_reviews,\n\n    (\n        SELECT COUNT(*)\n        FROM source_events\n        WHERE status = 'failed'\n          AND next_retry_at IS NULL\n    ) AS exhausted_event_failures,\n\n    (\n        SELECT COUNT(*)\n        FROM hubspot_sync_jobs\n        WHERE status IN ('pending', 'processing')\n    ) AS pending_hubspot_jobs,\n\n    (\n        SELECT COUNT(*)\n        FROM hubspot_sync_jobs\n        WHERE status = 'failed'\n          AND next_retry_at IS NULL\n    ) AS exhausted_hubspot_failures,\n\n    (\n        SELECT COUNT(*)\n        FROM contact_change_proposals\n        WHERE status IN ('pending', 'conflict')\n    ) AS change_reviews,\n\n    (\n        SELECT COUNT(*)\n        FROM source_events\n        WHERE status = 'received'\n          AND received_at < NOW() - INTERVAL '15 minutes'\n    ) AS stale_received_events;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "5618fb2c-0f68-42f7-8613-711156c25f51",
+      "name": "GetSystemHealth",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst metrics = $input.first().json;\n\nconst counts = {};\n\nfor (const [key, value] of Object.entries(metrics)) {\n  counts[key] = Number(value ?? 0);\n}\n\nconst alerts = [];\n\nif (counts.exhausted_event_failures > 0) {\n  alerts.push(\"Events exhausted retries\");\n}\n\nif (counts.exhausted_hubspot_failures > 0) {\n  alerts.push(\"HubSpot jobs exhausted retries\");\n}\n\nif (counts.stale_received_events > 0) {\n  alerts.push(\"Events have been waiting over 15 minutes\");\n}\n\nif (counts.identity_reviews > 0) {\n  alerts.push(\"Customer identities need review\");\n}\n\nif (counts.change_reviews > 0) {\n  alerts.push(\"Contact change proposals need review\");\n}\n\nreturn [{\n  json: {\n    status: alerts.length ? \"attention_required\" : \"healthy\",\n    checked_at: new Date().toISOString(),\n    metrics: counts,\n    alerts\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "5d48c00b-43ac-48e1-93cb-5f8ffe67cdc8",
+      "name": "EvaluateSystemHealth"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_health_snapshots (\n    health_status,\n    metrics,\n    alerts\n)\nVALUES (\n    $1,\n    $2::jsonb,\n    $3::jsonb\n)\nRETURNING id, checked_at;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.status,\n  JSON.stringify($json.metrics),\n  JSON.stringify($json.alerts)\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        672,
+        0
+      ],
+      "id": "3918ee30-cd61-44f8-9630-b5e79304dd34",
+      "name": "SaveSystemHealth",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "GetSystemHealth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetSystemHealth": {
+      "main": [
+        [
+          {
+            "node": "EvaluateSystemHealth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EvaluateSystemHealth": {
+      "main": [
+        [
+          {
+            "node": "SaveSystemHealth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "5eee38d7-e5be-476e-8b66-1d681139c093",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "uvZqSVQkrCE5iho3",
+  "tags": []
+}

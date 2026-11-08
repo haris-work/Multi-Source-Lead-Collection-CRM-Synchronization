@@ -1,0 +1,133 @@
+{
+  "name": "Project02 - Event Worker",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH candidate AS (\n    SELECT id\n    FROM source_events\n    WHERE\n        (\n            status = 'received'\n\n            OR (\n                status = 'failed'\n                AND next_retry_at <= NOW()\n            )\n\n            OR (\n                status = 'processing'\n                AND lease_expires_at <= NOW()\n            )\n        )\n        AND attempt_count < 3\n\n    ORDER BY id ASC\n    FOR UPDATE SKIP LOCKED\n    LIMIT 1\n),\n\nclaimed AS (\n    UPDATE source_events AS e\n    SET\n        status = 'processing',\n        attempt_count = e.attempt_count + 1,\n        claim_token = gen_random_uuid(),\n        lease_expires_at =\n            NOW() + INTERVAL '5 minutes',\n        next_retry_at = NULL,\n        updated_at = NOW()\n\n    FROM candidate\n    WHERE e.id = candidate.id\n\n    RETURNING\n        e.id,\n        e.source,\n        e.source_event_id,\n        e.payload,\n        e.attempt_count,\n        e.claim_token,\n        e.lease_expires_at\n)\n\nSELECT *\nFROM claimed;\n",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "69407fe0-9286-4353-ba5d-7d6f40b4feb6",
+      "name": "ClaimNextEvent",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map((item, index) => {\n  const event = item.json;\n  const payload = event.payload;\n\n  const errors = [];\n\n  if (!payload || typeof payload !== \"object\") {\n    errors.push(\"Missing canonical payload\");\n  }\n\n  const customer = payload?.customer ?? {};\n  const inquiry = payload?.inquiry ?? {};\n\n  const email = String(\n    customer.email ?? \"\"\n  ).trim().toLowerCase();\n\n  const name = String(\n    customer.name ?? \"\"\n  ).trim();\n\n  const service = String(\n    inquiry.service ?? \"\"\n  ).trim();\n\n  if (name.length < 2) {\n    errors.push(\"Customer name is invalid\");\n  }\n\n  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {\n    errors.push(\"Customer email is invalid\");\n  }\n\n  if (!service) {\n    errors.push(\"Service is missing\");\n  }\n\n  const testForceRetry =\n    payload?.metadata?.test_force_retry === true;\n\n  let processingStatus = \"ready\";\n  let errorMessage = \"\";\n\n  if (errors.length > 0) {\n    processingStatus = \"rejected\";\n    errorMessage = errors.join(\"; \");\n  } else if (testForceRetry) {\n    processingStatus = \"failed\";\n    errorMessage = \"Simulated transient failure\";\n  }\n\n  return {\n    json: {\n      database_event_id: event.id,\n      claim_token: event.claim_token,\n      attempt_count: event.attempt_count,\n\n      source: event.source,\n      source_event_id: event.source_event_id,\n\n      processing_status: processingStatus,\n      error_message: errorMessage,\n\n      customer: {\n        name,\n        email,\n        phone: customer.phone ?? \"\",\n        company: customer.company ?? \"\"\n      },\n\n      inquiry: {\n        service,\n        budget: inquiry.budget ?? null,\n        message: inquiry.message ?? \"\"\n      }\n    },\n    pairedItem: { item: index }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "febac0c2-27cb-4a9e-8ea7-afca1b2fa2d1",
+      "name": "PrepareCanonicalEvent"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH updated AS (\n    UPDATE source_events\n    SET\n        status = $3::text,\n        last_error = NULLIF($4::text, ''),\n        next_retry_at = CASE\n            WHEN $3::text = 'failed'\n                 AND attempt_count < 3\n            THEN\n                NOW() +\n                (\n                    POWER(2, attempt_count - 1)\n                    * INTERVAL '1 minute'\n                )\n            ELSE NULL\n        END,\n        claim_token = NULL,\n        lease_expires_at = NULL,\n        updated_at = NOW(),\n        processed_at = CASE\n            WHEN $3::text IN ('ready', 'rejected')\n            THEN NOW()\n            ELSE processed_at\n        END\n    WHERE id = $1::bigint\n      AND claim_token = $2::uuid\n      AND status = 'processing'\n      AND (\n          lease_expires_at IS NULL\n          OR lease_expires_at > NOW()\n      )\n    RETURNING id, customer_id, status,\n              attempt_count, next_retry_at\n),\n\nlogged AS (\n    INSERT INTO sync_audit_logs (\n        source_event_id,\n        customer_id,\n        action,\n        outcome,\n        details\n    )\n    SELECT\n        id,\n        customer_id,\n        'prepare_event',\n        status,\n        jsonb_build_object(\n            'attempt_count', attempt_count,\n            'error', $4::text\n        )\n    FROM updated\n    RETURNING id\n)\n\nSELECT\n    updated.id AS database_event_id,\n    updated.status,\n    updated.attempt_count,\n    updated.next_retry_at,\n    logged.id AS audit_log_id\nFROM updated\nJOIN logged ON TRUE;\n",
+        "options": {
+          "queryReplacement": "=\n{{ [\n  $json.database_event_id,\n  $json.claim_token,\n  $json.processing_status,\n  $json.error_message\n] }}\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        672,
+        0
+      ],
+      "id": "78fa32dc-888d-4c2b-8ff0-c4208778854d",
+      "name": "FinalizeEvent",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        160
+      ],
+      "id": "86baf9de-3e9d-4cff-a6fc-7fb2a28198ad",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ClaimNextEvent": {
+      "main": [
+        [
+          {
+            "node": "PrepareCanonicalEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PrepareCanonicalEvent": {
+      "main": [
+        [
+          {
+            "node": "FinalizeEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "ClaimNextEvent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "3142f442-ca8f-4005-837d-9073f8316f8d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "vuHzkARrpu8K07ax",
+  "tags": []
+}

@@ -1,0 +1,73 @@
+{
+  "name": "Project02 - HubSpot Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nINSERT INTO hubspot_sync_jobs (\n    customer_id,\n    status\n)\nSELECT\n    c.id,\n    'pending'\nFROM customers c\nWHERE c.primary_email IS NOT NULL\n  AND TRIM(c.primary_email) <> ''\n  AND c.hubspot_contact_id IS NULL\n\nON CONFLICT (customer_id)\nDO NOTHING\n\nRETURNING\n    id,\n    customer_id,\n    status;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "33b19bb0-93ed-43db-a227-4f59e620443d",
+      "name": "QueueHubSpotContacts",
+      "credentials": {
+        "postgres": {
+          "id": "Pc6eny88Qh7qM2GZ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -32,
+        0
+      ],
+      "id": "28b59e86-1b1b-4c2c-a388-e8b71199ecac",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "QueueHubSpotContacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "61e96f15-14e6-4e59-8c2a-d7f5b0c4c9ad",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99e1c58029993d7b83d366bc872a943b0991500537209606cfaa01b57a7dc6bd"
+  },
+  "nodeGroups": [],
+  "id": "NA21xdyxkaOo3F7D",
+  "tags": []
+}
